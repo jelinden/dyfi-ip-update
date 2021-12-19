@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -13,7 +14,7 @@ import (
 
 var outboundIP string
 var quit = make(chan struct{})
-var client = &http.Client{}
+var client http.Client
 
 const portfolioURL = "jelinden-portfolio.dy.fi"
 const newsURL = "jelinden.dy.fi"
@@ -21,6 +22,7 @@ const newsURL = "jelinden.dy.fi"
 var dyUsername, dyPassword string
 
 func main() {
+	client = *httpClient()
 	dyUsername = os.Getenv("dyUsername")
 	dyPassword = os.Getenv("dyPassword")
 	outboundIP = GetOutboundIP().To4().String()
@@ -31,6 +33,12 @@ func main() {
 	<-quit // use close(quit) to exit
 }
 
+func httpClient() *http.Client {
+	customTransport := &(*http.DefaultTransport.(*http.Transport)) // make shallow copy
+	customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	return &http.Client{Transport: customTransport}
+
+}
 func checkIPchanged() {
 	ip := GetOutboundIP()
 	if ip != nil && ip.To4().String() != outboundIP {
