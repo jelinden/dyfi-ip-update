@@ -62,6 +62,7 @@ func updateIP(hostname string) {
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
