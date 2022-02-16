@@ -18,6 +18,7 @@ var client http.Client
 
 const portfolioURL = "jelinden-portfolio.dy.fi"
 const newsURL = "jelinden.dy.fi"
+const incomewithdividendsURL = "incomewithdividends.dy.fi"
 
 var dyUsername, dyPassword string
 
@@ -30,6 +31,7 @@ func main() {
 	go heartBeat(checkIPchanged, 3*time.Second)
 	go heartBeatWithParams(updateIP, 24*5*time.Hour, portfolioURL)
 	go heartBeatWithParams(updateIP, 24*5*time.Hour, newsURL)
+	go heartBeatWithParams(updateIP, 24*5*time.Hour, incomewithdividendsURL)
 	<-quit // use close(quit) to exit
 }
 
