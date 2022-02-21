@@ -48,6 +48,7 @@ func checkIPchanged() {
 		outboundIP = ip.To4().String()
 		updateIP(portfolioURL)
 		updateIP(newsURL)
+		updateIP(incomewithdividendsURL)
 	}
 }
 
