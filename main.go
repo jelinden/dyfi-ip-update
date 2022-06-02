@@ -17,7 +17,9 @@ var quit = make(chan struct{})
 var client http.Client
 
 const mainDomain = "jelinden.fi"
+const wwwMainDomain = "www.jelinden.fi"
 const incomewithdividendsURL = "incomewithdividends.dy.fi"
+const portfolioURL = "portfolio.jelinden.fi"
 
 var dyUsername, dyPassword string
 
@@ -29,9 +31,13 @@ func main() {
 	log.Println(outboundIP)
 	updateIP(mainDomain)
 	updateIP(incomewithdividendsURL)
+	updateIP(wwwMainDomain)
+	updateIP(portfolioURL)
 	go heartBeat(checkIPchanged, 3*time.Second)
 	go heartBeatWithParams(updateIP, 24*5*time.Hour, mainDomain)
 	go heartBeatWithParams(updateIP, 24*5*time.Hour, incomewithdividendsURL)
+	go heartBeatWithParams(updateIP, 24*5*time.Hour, wwwMainDomain)
+	go heartBeatWithParams(updateIP, 24*5*time.Hour, portfolioURL)
 	<-quit // use close(quit) to exit
 }
 
