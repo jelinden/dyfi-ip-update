@@ -16,10 +16,12 @@ var outboundIP string
 var quit = make(chan struct{})
 var client http.Client
 
-const mainDomain = "jelinden.fi"
-const wwwMainDomain = "www.jelinden.fi"
-const incomewithdividendsURL = "incomewithdividends.dy.fi"
-const portfolioURL = "portfolio.jelinden.fi"
+var domainsToBeUpdated = []string{
+	"jelinden.fi",
+	"www.jelinden.fi",
+	"incomewithdividends.dy.fi",
+	"portfolio.jelinden.fi",
+}
 
 var dyUsername, dyPassword string
 
@@ -29,15 +31,13 @@ func main() {
 	dyPassword = os.Getenv("dyPassword")
 	outboundIP = GetOutboundIP().To4().String()
 	log.Println(outboundIP)
-	updateIP(mainDomain)
-	updateIP(incomewithdividendsURL)
-	updateIP(wwwMainDomain)
-	updateIP(portfolioURL)
+	for _, d := range domainsToBeUpdated {
+		updateIP(d)
+	}
 	go heartBeat(checkIPchanged, 3*time.Second)
-	go heartBeatWithParams(updateIP, 24*5*time.Hour, mainDomain)
-	go heartBeatWithParams(updateIP, 24*5*time.Hour, incomewithdividendsURL)
-	go heartBeatWithParams(updateIP, 24*5*time.Hour, wwwMainDomain)
-	go heartBeatWithParams(updateIP, 24*5*time.Hour, portfolioURL)
+	for _, d := range domainsToBeUpdated {
+		go heartBeatWithParams(updateIP, 24*5*time.Hour, d)
+	}
 	<-quit // use close(quit) to exit
 }
 
@@ -52,8 +52,9 @@ func checkIPchanged() {
 	if ip != nil && ip.To4().String() != outboundIP {
 		log.Println("changing ip from", outboundIP, "to", ip.To4().String())
 		outboundIP = ip.To4().String()
-		updateIP(mainDomain)
-		updateIP(incomewithdividendsURL)
+		for _, d := range domainsToBeUpdated {
+			updateIP(d)
+		}
 	}
 }
 
