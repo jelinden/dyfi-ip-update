@@ -22,6 +22,7 @@ var domainsToBeUpdated = []string{
 	"incomewithdividends.dy.fi",
 	"portfolio.jelinden.fi",
 	"www.uutispuro.fi",
+	"uutispuro.fi",
 }
 
 var dyUsername, dyPassword string
