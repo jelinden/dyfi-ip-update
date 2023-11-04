@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,6 +23,7 @@ var domainsToBeUpdated = []string{
 	"portfolio.jelinden.fi",
 	"www.uutispuro.fi",
 	"uutispuro.fi",
+	"content-service.jelinden.fi",
 }
 
 var dyUsername, dyPassword string
@@ -76,7 +77,7 @@ func updateIP(hostname string) {
 		return
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(err)
 	}
