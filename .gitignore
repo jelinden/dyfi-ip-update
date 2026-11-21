@@ -1,1 +1,6 @@
 dyfi-ip-update
+# credential files - never commit these
+.env
+*.env
+dyfi.env
+credentials*
