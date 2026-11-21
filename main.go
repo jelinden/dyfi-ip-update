@@ -418,6 +418,11 @@ func reRegister(host string) error {
 }
 
 func webLogin() error {
+	// Prime the session cookie from the front page before submitting the
+	// login form (the PHP session is started on the first visit).
+	if _, err := getPage(webBaseURL); err != nil {
+		return fmt.Errorf("fetching front page: %w", err)
+	}
 	v := url.Values{
 		"c":        {"login"},
 		"email":    {dyUsername},
@@ -429,19 +434,33 @@ func webLogin() error {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
-	// Verify we are logged in: the account page only shows these when
-	// there is an active session.
+	// Verify the session: a logged-out page always renders the login
+	// form (an input named "password"); a logged-in page shows the
+	// logout link instead. Re-fetch the front page to be sure the
+	// session cookie sticks across requests.
 	home, err := getPage(webBaseURL)
 	if err != nil {
 		return fmt.Errorf("verifying session: %w", err)
 	}
-	lower := strings.ToLower(home)
-	if strings.Contains(lower, "change password") || strings.Contains(lower, "vaihda salasana") {
+	if loggedIn(home) {
 		return nil
 	}
-	return fmt.Errorf("login did not establish a session (check credentials); HTTP status %d", resp.StatusCode)
+	return fmt.Errorf("login did not establish a session (POST status %d, login form still present) - dyUsername must be the account e-mail; response snippet: %s",
+		resp.StatusCode, snippet(string(respBody)))
+}
+
+func loggedIn(page string) bool {
+	if strings.Contains(page, `name="password"`) {
+		return false // login form still shown -> not authenticated
+	}
+	lower := strings.ToLower(page)
+	return strings.Contains(lower, "kirjaudu ulos") ||
+		strings.Contains(lower, "log out") ||
+		strings.Contains(lower, "logout") ||
+		strings.Contains(lower, "change password") ||
+		strings.Contains(lower, "vaihda salasana")
 }
 
 func getPage(u string) (string, error) {

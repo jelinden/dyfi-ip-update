@@ -102,6 +102,24 @@ func TestParseAddFormRelativeAndMissing(t *testing.T) {
 	}
 }
 
+func TestLoggedInDetection(t *testing.T) {
+	loggedOut := `<a href="/?c=forgot">Unohtuiko salasana?</a>
+		<input type="password" name="password" size="19" />`
+	if loggedIn(loggedOut) {
+		t.Error("page with login form must not be considered logged in")
+	}
+
+	for _, page := range []string{
+		`<a href="/?c=logout">kirjaudu ulos</a>`,
+		`<a href="/?c=logout">log out</a>`,
+		`<a href="/nic/changepw">change password</a>`,
+	} {
+		if !loggedIn(page) {
+			t.Errorf("expected logged-in detection for: %q", page)
+		}
+	}
+}
+
 func TestUpdateResultString(t *testing.T) {
 	if resultNoHost.String() != "no-host" {
 		t.Errorf("got %q", resultNoHost.String())
