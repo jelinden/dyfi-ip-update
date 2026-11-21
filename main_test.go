@@ -102,6 +102,22 @@ func TestParseAddFormRelativeAndMissing(t *testing.T) {
 	}
 }
 
+func TestEnqueueDedupesPerHost(t *testing.T) {
+	// use a private channel-backed scenario on the global queue
+	dequeue("dedupe-test.fi") // ensure clean state
+	if !enqueue(job{host: "dedupe-test.fi", reason: "first"}) {
+		t.Fatal("first enqueue should succeed")
+	}
+	if enqueue(job{host: "dedupe-test.fi", reason: "duplicate"}) {
+		t.Error("second enqueue for same host should be coalesced")
+	}
+	dequeue("dedupe-test.fi")
+	if !enqueue(job{host: "dedupe-test.fi", reason: "after dequeue"}) {
+		t.Error("enqueue after dequeue should succeed")
+	}
+	dequeue("dedupe-test.fi")
+}
+
 func TestLoggedInDetection(t *testing.T) {
 	loggedOut := `<a href="/?c=forgot">Unohtuiko salasana?</a>
 		<input type="password" name="password" size="19" />`

@@ -103,7 +103,36 @@ var (
 	outboundIP string
 
 	jobs = make(chan job, 128)
+
+	queueMu sync.Mutex
+	queued  = map[string]bool{} // hosts with a job already waiting in jobs
 )
+
+// enqueue adds a job unless the same host is already waiting in the
+// queue. Coalescing duplicates keeps dy.fi's 'nochg' abuse protection
+// happy when IP-change bursts and scheduled refreshes overlap.
+func enqueue(j job) bool {
+	queueMu.Lock()
+	defer queueMu.Unlock()
+	if queued[j.host] {
+		log.Printf("%s: job (%s) coalesced into existing queued job", j.host, j.reason)
+		return false
+	}
+	select {
+	case jobs <- j:
+		queued[j.host] = true
+		return true
+	default:
+		log.Printf("%s: job (%s) dropped - update queue full", j.host, j.reason)
+		return false
+	}
+}
+
+func dequeue(host string) {
+	queueMu.Lock()
+	delete(queued, host)
+	queueMu.Unlock()
+}
 
 type updateResult int
 
@@ -165,7 +194,7 @@ func main() {
 	// Initial update of all hosts (queued through the worker so that
 	// request pacing applies).
 	for _, d := range domainsToBeUpdated {
-		jobs <- job{host: d, reason: "startup"}
+		enqueue(job{host: d, reason: "startup"})
 	}
 
 	go worker(c)
@@ -213,6 +242,7 @@ func worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case j := <-jobs:
+			dequeue(j.host)
 			handleJob(ctx, j)
 			select {
 			case <-ctx.Done():
@@ -228,7 +258,13 @@ func handleJob(ctx context.Context, j job) {
 	switch res {
 	case resultOK:
 		log.Printf("%s (%s): %s", j.host, j.reason, msg)
-		j.ensureZoneFresh(ctx)
+		// Only "nochg" *claims* the published DNS is already up to date -
+		// that is the stale-zone case worth verifying. "good" is a real
+		// DB change whose zone rebuild may legitimately take longer than
+		// our verification delay, so don't re-cycle it.
+		if strings.HasPrefix(msg, "nochg") {
+			j.ensureZoneFresh(ctx)
+		}
 
 	case resultAuthFail:
 		log.Printf("%s (%s): authentication FAILED (%s) - check dyUsername/dyPassword; not retrying",
@@ -266,8 +302,9 @@ func requeue(ctx context.Context, j job, why string) {
 	}
 	time.AfterFunc(transientRetry, func() {
 		select {
-		case jobs <- j:
 		case <-ctx.Done():
+		default:
+			enqueue(j)
 		}
 	})
 }
@@ -342,6 +379,12 @@ func dnsHasIP(host, wantIP string) (found bool, checked bool) {
 		}
 		var d dohAnswer
 		if err := json.Unmarshal(body, &d); err != nil {
+			continue
+		}
+		// Only trust definitive answers: 0 = NOERROR, 3 = NXDOMAIN.
+		// SERVFAIL etc. -> try the next resolver instead of assuming
+		// the record is missing (which would trigger a bogus cycle).
+		if d.Status != 0 && d.Status != 3 {
 			continue
 		}
 		for _, a := range d.Answer {
@@ -419,7 +462,7 @@ func refreshLoop(ctx context.Context, host string) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			jobs <- job{host: host, reason: "scheduled refresh"}
+			enqueue(job{host: host, reason: "scheduled refresh"})
 		}
 	}
 }
@@ -446,7 +489,7 @@ func ipChangeWatcher(ctx context.Context) {
 				log.Println("outbound IP changed:", getOutboundIP(), "->", ip.String())
 				setOutboundIP(ip)
 				for _, d := range domainsToBeUpdated {
-					jobs <- job{host: d, reason: "IP change"}
+					enqueue(job{host: d, reason: "IP change"})
 				}
 			}
 		}
@@ -645,8 +688,8 @@ func htmlAttr(tag, attr string) string {
 
 func snippet(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 200 {
-		s = s[:200] + "..."
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200]) + "..."
 	}
 	return s
 }
