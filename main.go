@@ -31,6 +31,7 @@ const (
 	refreshPeriod  = 5 * 24 * time.Hour
 	refreshJitter  = 4 * time.Hour   // dy.fi asks for "slightly random interval"
 	requestSpacing = 3 * time.Second // pacing between API calls (avoid 'abuse')
+	dnsVerifyDelay = 5 * time.Second // grace before verifying DNS after an update
 	transientRetry = 10 * time.Minute
 	maxAttempts    = 3
 )
@@ -127,9 +128,10 @@ func (r updateResult) String() string {
 }
 
 type job struct {
-	host    string
-	reason  string
-	attempt int
+	host     string
+	reason   string
+	attempts int
+	forced   bool // already attempted an offline/online zone cycle
 }
 
 func main() {
@@ -226,6 +228,7 @@ func handleJob(ctx context.Context, j job) {
 	switch res {
 	case resultOK:
 		log.Printf("%s (%s): %s", j.host, j.reason, msg)
+		j.ensureZoneFresh(ctx)
 
 	case resultAuthFail:
 		log.Printf("%s (%s): authentication FAILED (%s) - check dyUsername/dyPassword; not retrying",
@@ -255,10 +258,10 @@ func handleJob(ctx context.Context, j job) {
 }
 
 func requeue(ctx context.Context, j job, why string) {
-	j.attempt++
-	if j.attempt > maxAttempts {
+	j.attempts++
+	if j.attempts > maxAttempts {
 		log.Printf("%s: giving up after %d attempts (%s); refresh loop will retry in ~%d days",
-			j.host, j.attempt-1, why, int(refreshPeriod.Hours()/24))
+			j.host, j.attempts-1, why, int(refreshPeriod.Hours()/24))
 		return
 	}
 	time.AfterFunc(transientRetry, func() {
@@ -269,11 +272,104 @@ func requeue(ctx context.Context, j job, why string) {
 	})
 }
 
+// ensureZoneFresh checks that the host actually resolves to our current
+// outbound IP. dy.fi can return "nochg" (DB thinks it is up to date)
+// while the published zone is missing the record; in that case we force
+// a zone rebuild by toggling the host offline and back online.
+func (j job) ensureZoneFresh(ctx context.Context) {
+	if j.forced {
+		return
+	}
+	ip := getOutboundIP()
+	if ip == "" {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(dnsVerifyDelay):
+	}
+	found, checked := dnsHasIP(j.host, ip)
+	if !checked {
+		log.Printf("%s: could not verify DNS (no DoH resolver reachable), skipping check", j.host)
+		return
+	}
+	if found {
+		return
+	}
+	log.Printf("%s: update accepted but DNS does not point to %s - forcing offline/online zone cycle", j.host, ip)
+	if res, msg := updateIPParams(j.host, true); res != resultOK {
+		log.Printf("%s: offline step failed (%v): %s", j.host, res, msg)
+		j.forced = true
+		requeue(ctx, j, "failed offline step")
+		return
+	}
+	time.Sleep(requestSpacing)
+	j.forced = true
+	res2, msg2 := updateIP(j.host)
+	if res2 == resultOK {
+		log.Printf("%s: forced re-activation succeeded: %s", j.host, msg2)
+	} else {
+		log.Printf("%s: re-activation after offline failed (%v): %s", j.host, res2, msg2)
+		requeue(ctx, j, "failed online step")
+	}
+}
+
+// dnsHasIP queries DNS-over-HTTPS (Google, then Cloudflare) to check
+// whether host currently has an A record with wantIP. dy.fi uses a 5 s
+// negative TTL, so results are near-real-time.
+func dnsHasIP(host, wantIP string) (found bool, checked bool) {
+	type dohAnswer struct {
+		Status int `json:"Status"`
+		Answer []struct {
+			Data string `json:"data"`
+			Type int    `json:"type"`
+		} `json:"Answer"`
+	}
+	for _, tmpl := range []string{
+		"https://dns.google/resolve?name=%s&type=A",
+		"https://cloudflare-dns.com/dns-query?name=%s&type=A",
+	} {
+		u := fmt.Sprintf(tmpl, url.QueryEscape(host))
+		resp, err := client.Get(u)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 200 {
+			continue
+		}
+		var d dohAnswer
+		if err := json.Unmarshal(body, &d); err != nil {
+			continue
+		}
+		for _, a := range d.Answer {
+			if a.Type == 1 && a.Data == wantIP {
+				return true, true
+			}
+		}
+		// Resolver answered (NXDOMAIN or other records): stale/missing.
+		return false, true
+	}
+	return false, false
+}
+
 // updateIP sends a dy.fi nic/update request for hostname and interprets
 // the reply per https://www.dy.fi/page/specification
 func updateIP(hostname string) (updateResult, string) {
+	return updateIPParams(hostname, false)
+}
+
+// updateIPParams performs nic/update; when offline is true the host is
+// released from DNS ("offline=yes"), which counts as a real change and
+// makes dy.fi rebuild the zone.
+func updateIPParams(hostname string, offline bool) (updateResult, string) {
 	q := url.Values{}
 	q.Set("hostname", hostname)
+	if offline {
+		q.Set("offline", "yes")
+	}
 	req, err := http.NewRequest("GET", updateURL+"?"+q.Encode(), nil)
 	if err != nil {
 		return resultTransient, fmt.Sprintf("building request: %v", err)
