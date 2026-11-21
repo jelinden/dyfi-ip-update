@@ -4,3 +4,5 @@ dyfi-ip-update
 *.env
 dyfi.env
 credentials*
+# runtime config (copy dyfi.example.json to dyfi.json and edit)
+dyfi.json

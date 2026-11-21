@@ -1,9 +1,61 @@
 package main
 
 import (
+	"encoding/json"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestLoadConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dyfi.json")
+	content := `{"domains": [" Jelinden.fi ", "jelinden.fi", "", "uutispuro.fi"]}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"jelinden.fi", "uutispuro.fi"} // trimmed, lowercased, deduped
+	if len(cfg.Domains) != len(want) {
+		t.Fatalf("got %v, want %v", cfg.Domains, want)
+	}
+	for i := range want {
+		if cfg.Domains[i] != want[i] {
+			t.Errorf("domains[%d] = %q, want %q", i, cfg.Domains[i], want[i])
+		}
+	}
+}
+
+func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
+	cfg, err := loadConfig(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Domains) != len(defaultDomains) {
+		t.Errorf("got %d domains, want %d defaults", len(cfg.Domains), len(defaultDomains))
+	}
+}
+
+func TestLoadConfigErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	bad := filepath.Join(dir, "bad.json")
+	os.WriteFile(bad, []byte("{not json"), 0o600)
+	if _, err := loadConfig(bad); err == nil {
+		t.Error("expected parse error")
+	}
+
+	empty := filepath.Join(dir, "empty.json")
+	b, _ := json.Marshal(Config{Domains: []string{" ", ""}})
+	os.WriteFile(empty, b, 0o600)
+	if _, err := loadConfig(empty); err == nil {
+		t.Error("expected error for empty domains list")
+	}
+}
 
 func TestParseAddForm(t *testing.T) {
 	page := `<html><body>

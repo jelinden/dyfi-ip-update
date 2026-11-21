@@ -30,9 +30,29 @@ organisation (`badip` otherwise).
 
 `go build`
 
+## Configuration
+
+The domains to update live in a JSON file outside the code (default
+`dyfi.json` next to the binary, or `-config /path/to/file.json`).
+Copy `dyfi.example.json` to `dyfi.json` and edit:
+
+```json
+{
+  "domains": [
+    "jelinden.fi",
+    "www.jelinden.fi",
+    "uutispuro.fi"
+  ]
+}
+```
+
+If the file is missing, the built-in default domain list is used.
+`dyfi.json` is gitignored; duplicates and surrounding whitespace are
+ignored and domains are lowercased automatically.
+
 ## Running
 
-dyUsername=USERNAME dyPassword=PASSWORD ./dyfi-ip-update
+dyUsername=USERNAME dyPassword=PASSWORD ./dyfi-ip-update [-config dyfi.json]
 
 ## Tests
 

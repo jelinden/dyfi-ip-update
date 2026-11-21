@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -34,10 +36,11 @@ const (
 )
 
 // Hostnames whose A records should always point to this machine's
-// outbound IP. Hosts on dy.fi expire after 7 days; the refresh loop
-// renews them every ~5 days and re-registers them automatically if
-// an update ever comes back as "nohost" (reservation expired/released).
-var domainsToBeUpdated = []string{
+// outbound IP. Used as fallback when no config file is present.
+// Hosts on dy.fi expire after 7 days; the refresh loop renews them
+// every ~5 days and re-registers them automatically if an update ever
+// comes back as "nohost" (reservation expired/released).
+var defaultDomains = []string{
 	"jelinden.fi",
 	"www.jelinden.fi",
 	"incomewithdividends.dy.fi",
@@ -47,6 +50,50 @@ var domainsToBeUpdated = []string{
 	"content-service.jelinden.fi",
 }
 
+// domainsToBeUpdated is set at startup from the JSON config file
+// (see loadConfig), falling back to defaultDomains.
+var domainsToBeUpdated []string
+
+// Config is the on-disk JSON configuration, e.g. dyfi.json:
+//
+//	{ "domains": ["jelinden.fi", "www.jelinden.fi"] }
+type Config struct {
+	Domains []string `json:"domains"`
+}
+
+// loadConfig reads the JSON config at path. If the file does not
+// exist, it returns the built-in defaults. A config with an empty or
+// missing "domains" list is an error to avoid silently going idle.
+func loadConfig(path string) (*Config, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		log.Printf("config %s not found, using built-in default domains", path)
+		return &Config{Domains: defaultDomains}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var c Config
+	if err := json.Unmarshal(b, &c); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	seen := map[string]bool{}
+	domains := make([]string, 0, len(c.Domains))
+	for _, d := range c.Domains {
+		d = strings.TrimSpace(strings.ToLower(d))
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		domains = append(domains, d)
+	}
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("config %s contains no valid domains", path)
+	}
+	c.Domains = domains
+	return &c, nil
+}
+
 var (
 	dyUsername, dyPassword string
 	client                 *http.Client
@@ -54,7 +101,7 @@ var (
 	ipMu       sync.Mutex
 	outboundIP string
 
-	jobs = make(chan job, 64)
+	jobs = make(chan job, 128)
 )
 
 type updateResult int
@@ -87,6 +134,16 @@ type job struct {
 
 func main() {
 	log.SetFlags(log.LstdFlags)
+
+	configPath := flag.String("config", "dyfi.json", "path to JSON config file with the domains to update")
+	flag.Parse()
+
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	domainsToBeUpdated = cfg.Domains
+	log.Printf("updating %d domains from %s: %v", len(domainsToBeUpdated), *configPath, domainsToBeUpdated)
 
 	dyUsername = os.Getenv("dyUsername")
 	dyPassword = os.Getenv("dyPassword")
